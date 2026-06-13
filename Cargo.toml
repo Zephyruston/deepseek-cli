@@ -1,0 +1,28 @@
+[package]
+name = "deepseek-cli"
+version = "0.1.0"
+edition = "2024"
+description = "Monitor DeepSeek API usage and costs from the terminal"
+license = "MIT"
+
+[[bin]]
+name = "deepseek"
+path = "src/main.rs"
+
+[dependencies]
+ureq = { version = "3.3.0", features = ["cookies", "json"] }
+clap = { version = "4.6.1", features = ["derive"] }
+clap_complete = "4.6.5"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+chrono = "0.4.45"
+tabled = "0.21.0"
+qrcode = "0.14.1"
+rqrr = "0.10.1"
+image = { version = "0.25.10", default-features = false, features = [
+    "png",
+    "jpeg",
+] }
+thiserror = "2.0.18"
+confy = "2.0.0"
+regex = "1.12.4"
