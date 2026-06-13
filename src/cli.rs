@@ -19,6 +19,9 @@ pub enum Commands {
         /// Show per-model cost breakdown
         #[arg(short, long)]
         verbose: bool,
+        /// Output as JSON instead of table
+        #[arg(long)]
+        json: bool,
     },
 
     /// Log in with WeChat QR code

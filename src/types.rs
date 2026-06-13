@@ -1,9 +1,9 @@
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 // ── Aggregated output ────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AggregatedData {
     pub balance: f64,
     pub currency: String,
@@ -15,13 +15,13 @@ pub struct AggregatedData {
     pub last_updated: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ModelCostEntry {
     pub name: String,
     pub cost: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TokenSummary {
     pub input_cache_hit: u64,
     pub input_cache_miss: u64,

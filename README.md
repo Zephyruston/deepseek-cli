@@ -21,6 +21,7 @@ Monitor [DeepSeek API](https://platform.deepseek.com) usage and costs directly f
 
 - **One command** — `deepseek status` shows everything: balance, monthly cost, today's cost, token usage, cache hit rate
 - **Per-model breakdown** — `-v` adds a table of cost by model (v4-pro, v4-flash, chat, etc.)
+- **Machine-readable** — `--json` outputs raw data for scripting / piping
 - **WeChat QR login** — scan a QR straight from your terminal, no copy-paste of tokens
 - **Single binary** — ~7 MB, statically linked, zero runtime dependencies
 
@@ -94,6 +95,7 @@ deepseek completions fish > ~/.config/fish/completions/deepseek.fish
 | ------------------------------ | -------------------------------- |
 | `deepseek status`              | Usage dashboard                  |
 | `deepseek status -v`           | Add per-model cost table         |
+| `deepseek status --json`       | Output as JSON (for scripting)   |
 | `deepseek login`               | WeChat QR authentication         |
 | `deepseek token`               | Paste session token manually     |
 | `deepseek logout`              | Clear stored credentials         |

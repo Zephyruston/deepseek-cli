@@ -21,6 +21,7 @@
 
 - **一行命令看全部** — `deepseek status` 显示余额、月消费、日消费、Token 用量、缓存命中率
 - **按模型拆分** — `-v` 追加各模型费用明细（v4-pro、v4-flash、chat 等）
+- **机器可读** — `--json` 输出原始数据，便于脚本处理
 - **微信扫码登录** — 终端直接渲染二维码，扫码即登录
 - **单文件二进制** — 约 7 MB，静态链接，无需任何运行时
 
@@ -94,9 +95,11 @@ deepseek completions fish > ~/.config/fish/completions/deepseek.fish
 | ------------------------------ | ---------------------- |
 | `deepseek status`              | 用量看板               |
 | `deepseek status -v`           | 含各模型费用拆分       |
+| `deepseek status --json`       | JSON 格式输出（供脚本使用） |
 | `deepseek login`               | 微信扫码登录           |
 | `deepseek token`               | 手动粘贴 session token |
 | `deepseek logout`              | 清除登录凭证           |
+| `deepseek completions <SHELL>` | 生成 shell 补全脚本    |
 | `deepseek completions <SHELL>` | 生成 shell 补全脚本    |
 
 ## 认证

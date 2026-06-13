@@ -17,7 +17,7 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Status { verbose } => handle_status(verbose),
+        Commands::Status { verbose, json } => handle_status(verbose, json),
         Commands::Login => handle_login(),
         Commands::Logout => AuthManager::logout(),
         Commands::SetToken { value } => handle_set_token(value),
@@ -30,10 +30,10 @@ fn main() {
     }
 }
 
-fn handle_status(verbose: bool) -> Result<()> {
+fn handle_status(verbose: bool, json: bool) -> Result<()> {
     let token = storage::get_token()?;
     let api = ApiClient::new();
-    do_fetch_and_display(&api, &token, verbose)
+    do_fetch_and_display(&api, &token, verbose, json)
 }
 
 fn handle_login() -> Result<()> {
@@ -57,7 +57,7 @@ fn handle_set_token(value: Option<String>) -> Result<()> {
     AuthManager::set_token(&token)
 }
 
-fn do_fetch_and_display(api: &ApiClient, token: &str, verbose: bool) -> Result<()> {
+fn do_fetch_and_display(api: &ApiClient, token: &str, verbose: bool, json: bool) -> Result<()> {
     let now = Utc::now();
     let month = now.month() as i32;
     let year = now.year();
@@ -67,7 +67,11 @@ fn do_fetch_and_display(api: &ApiClient, token: &str, verbose: bool) -> Result<(
     let amount = api.get_usage_amount(token, month, year)?;
 
     let aggregated = data::aggregate(summary, &cost, &amount, now);
-    display::show_usage(&aggregated, verbose);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&aggregated).unwrap());
+    } else {
+        display::show_usage(&aggregated, verbose);
+    }
     Ok(())
 }
 
