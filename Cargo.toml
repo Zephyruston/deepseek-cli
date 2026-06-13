@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 description = "Monitor DeepSeek API usage and costs from the terminal"
 license = "MIT"
+repository = "https://github.com/Zephyruston/deepseek-cli"
+homepage = "https://github.com/Zephyruston/deepseek-cli"
 
 [[bin]]
 name = "deepseek"
@@ -26,3 +28,8 @@ image = { version = "0.25.10", default-features = false, features = [
 thiserror = "2.0.18"
 confy = "2.0.0"
 regex = "1.12.4"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
