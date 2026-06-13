@@ -1,6 +1,6 @@
 [package]
 name = "deepseek-cli"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Monitor DeepSeek API usage and costs from the terminal"
 license = "MIT"
