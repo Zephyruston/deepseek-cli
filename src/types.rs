@@ -54,19 +54,32 @@ pub struct BizWrapper<T> {
 
 #[derive(Deserialize, Debug, Clone, Default)]
 pub struct UserSummaryData {
+    #[serde(default)]
     pub total_balance: Option<f64>,
+    #[serde(default)]
     pub currency: Option<String>,
+    #[serde(default)]
     pub month_cost: Option<f64>,
+    #[serde(default)]
     pub total_usage: Option<f64>,
+    #[serde(default)]
     pub topped_up_balance: Option<f64>,
+    #[serde(default)]
     pub granted_balance: Option<f64>,
+    #[serde(default)]
     pub current_token: Option<f64>,
+    #[serde(default)]
     pub normal_wallets: Option<Vec<WalletBalance>>,
+    #[serde(default)]
     pub bonus_wallets: Option<Vec<WalletBalance>>,
+    #[serde(default)]
     pub monthly_costs: Option<Vec<MonthlyCost>>,
+    #[serde(default)]
     pub total_available_token_estimation: Option<String>,
-    pub monthly_token_usage: Option<String>,
-    pub monthly_usage: Option<String>,
+    #[serde(default)]
+    pub monthly_token_usage: Option<f64>,
+    #[serde(default)]
+    pub monthly_usage: Option<f64>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
