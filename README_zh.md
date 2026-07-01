@@ -73,7 +73,7 @@ $ deepseek status -v
 # 源码编译（需要 Rust ≥1.85）
 git clone https://github.com/Zephyruston/deepseek-cli.git
 cd deepseek-cli
-cargo install --path .
+cargo install --path . --locked
 ```
 
 ### Shell 补全
