@@ -1,6 +1,6 @@
 [package]
 name = "deepseek-cli"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Monitor DeepSeek API usage and costs from the terminal"
 license = "MIT"
@@ -14,7 +14,7 @@ path = "src/main.rs"
 [dependencies]
 ureq = { version = "3.3.0", features = ["cookies", "json"] }
 clap = { version = "4.6.1", features = ["derive"] }
-clap_complete = "4.6.5"
+clap_complete = "4.6.6"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 chrono = { version = "0.4.45", features = ["serde"] }
