@@ -52,6 +52,46 @@ pub struct BizWrapper<T> {
 
 // ── User summary ─────────────────────────────────────────────
 
+/// A value that may come back from DeepSeek as either a plain number
+/// (f64) or a stringified number — accept both during deserialization,
+/// store the canonical form as a String.
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(untagged)]
+enum StringOrF64Raw {
+    Num(f64),
+    Str(String),
+    #[default]
+    None,
+}
+
+/// String-or-f64 wrapper: deserialises from both JSON types, exposes the
+/// value as `Option<String>` for callers.
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // field 0 is read in the Deserialize impl; rustc Lint doesn't track that
+pub struct StringOrF64(Option<String>);
+
+impl<'de> Deserialize<'de> for StringOrF64 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = StringOrF64Raw::deserialize(deserializer)?;
+        let s = match raw {
+            StringOrF64Raw::Num(n) => Some(n.to_string()),
+            StringOrF64Raw::Str(s) => Some(s),
+            StringOrF64Raw::None => None,
+        };
+        Ok(Self(s))
+    }
+}
+
+#[allow(dead_code)]
+impl StringOrF64 {
+    fn as_str(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+}
+
 #[derive(Deserialize, Debug, Clone, Default)]
 pub struct UserSummaryData {
     #[serde(default)]
@@ -77,9 +117,9 @@ pub struct UserSummaryData {
     #[serde(default)]
     pub total_available_token_estimation: Option<String>,
     #[serde(default)]
-    pub monthly_token_usage: Option<String>,
+    pub monthly_token_usage: Option<StringOrF64>,
     #[serde(default)]
-    pub monthly_usage: Option<String>,
+    pub monthly_usage: Option<StringOrF64>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
