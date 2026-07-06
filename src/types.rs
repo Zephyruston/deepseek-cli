@@ -77,9 +77,9 @@ pub struct UserSummaryData {
     #[serde(default)]
     pub total_available_token_estimation: Option<String>,
     #[serde(default)]
-    pub monthly_token_usage: Option<f64>,
+    pub monthly_token_usage: Option<String>,
     #[serde(default)]
-    pub monthly_usage: Option<f64>,
+    pub monthly_usage: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
