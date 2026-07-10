@@ -7,27 +7,29 @@ use serde::{Deserialize, Serialize};
 pub struct AggregatedData {
     pub balance: f64,
     pub currency: String,
-    pub monthly_cost: f64,
-    pub today_cost: f64,
-    pub today_cost_by_model: Vec<ModelCostEntry>,
-    pub today_tokens: TokenSummary,
-    pub today_api_requests: u64,
+    pub period_cost: f64,
+    pub period_api_requests: u64,
+    pub period_tokens: u64,
+    pub models: Vec<ModelPeriodSummary>,
+    pub daily_items: Vec<DailyItem>,
     pub last_updated: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ModelCostEntry {
+pub struct ModelPeriodSummary {
     pub name: String,
     pub cost: f64,
+    pub api_requests: u64,
+    pub tokens: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct TokenSummary {
-    pub input_cache_hit: u64,
-    pub input_cache_miss: u64,
-    pub output: u64,
-    pub total: u64,
-    pub cache_hit_rate: f64, // 0.0 - 1.0
+pub struct DailyItem {
+    pub date: String,
+    pub cost: f64,
+    pub api_requests: u64,
+    pub tokens: u64,
+    pub models: Vec<ModelPeriodSummary>,
 }
 
 // ── API envelope ─────────────────────────────────────────────
@@ -240,6 +242,132 @@ pub struct UsageMetric {
     pub metric_type: String,
     #[serde(default)]
     pub amount: serde_json::Value,
+}
+
+// ── New: by_api_key endpoints ──────────────────────────────────
+
+/// Response from GET /api/v0/users/get_api_keys
+#[derive(Deserialize, Debug, Clone)]
+pub struct ApiKeysResponse {
+    pub api_keys: Vec<ApiKeyInfo>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct ApiKeyInfo {
+    pub tracking_id: String,
+    pub name: String,
+    pub sensitive_id: String,
+    pub created_at: i64,
+    pub last_use: i64,
+}
+
+/// Meta info embedded in each series item
+#[derive(Deserialize, Debug, Clone)]
+pub struct ApiKeyMeta {
+    pub tracking_id: String,
+    pub name: String,
+    pub sensitive_id: String,
+    pub valid: bool,
+}
+
+/// Flat usage metrics object (new format: keys are metric type names)
+#[derive(Debug, Clone, Default)]
+pub struct UsageMetrics {
+    pub response_token: u64,
+    pub request: u64,
+    pub prompt_cache_hit_token: u64,
+    pub prompt_cache_miss_token: u64,
+}
+
+impl UsageMetrics {
+    pub fn total(&self) -> u64 {
+        self.response_token + self.prompt_cache_hit_token + self.prompt_cache_miss_token
+    }
+}
+
+impl<'de> Deserialize<'de> for UsageMetrics {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::deserialize(deserializer)?;
+        let to_u64 = |v: &serde_json::Value| match v {
+            serde_json::Value::Number(n) => n.as_u64().unwrap_or(0),
+            serde_json::Value::String(s) => s.parse::<u64>().unwrap_or(0),
+            _ => 0,
+        };
+        Ok(UsageMetrics {
+            response_token: to_u64(
+                raw.get("RESPONSE_TOKEN")
+                    .unwrap_or(&serde_json::Value::Null),
+            ),
+            request: to_u64(raw.get("REQUEST").unwrap_or(&serde_json::Value::Null)),
+            prompt_cache_hit_token: to_u64(
+                raw.get("PROMPT_CACHE_HIT_TOKEN")
+                    .unwrap_or(&serde_json::Value::Null),
+            ),
+            prompt_cache_miss_token: to_u64(
+                raw.get("PROMPT_CACHE_MISS_TOKEN")
+                    .unwrap_or(&serde_json::Value::Null),
+            ),
+        })
+    }
+}
+
+/// Response from GET /api/v0/usage/by_api_key/amount
+#[derive(Deserialize, Debug, Clone)]
+pub struct ByApiKeyAmountResponse {
+    pub start: i64,
+    pub end: i64,
+    pub bucket: i64,
+    pub models: Vec<String>,
+    pub series: Vec<AmountSeriesItem>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct AmountSeriesItem {
+    #[serde(rename = "api_key")]
+    pub api_key: ApiKeyMeta,
+    pub model: String,
+    pub buckets: Vec<AmountBucket>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct AmountBucket {
+    pub time: i64,
+    pub usage: UsageMetrics,
+}
+
+/// Response from GET /api/v0/usage/by_api_key/cost
+#[derive(Deserialize, Debug, Clone)]
+pub struct ByApiKeyCostResponse {
+    pub start: i64,
+    pub end: i64,
+    pub bucket: i64,
+    pub models: Vec<String>,
+    pub data: Vec<CostCurrencyGroup>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct CostCurrencyGroup {
+    pub currency: String,
+    pub series: Vec<CostSeriesItem>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct CostSeriesItem {
+    #[serde(rename = "api_key")]
+    pub api_key: ApiKeyMeta,
+    pub model: String,
+    pub buckets: Vec<NewCostBucket>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct NewCostBucket {
+    pub time: i64,
+    #[serde(default)]
+    pub cost: String,
 }
 
 // ── Response enums (polymorphic deserialization) ─────────────

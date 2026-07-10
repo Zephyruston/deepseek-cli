@@ -19,9 +19,11 @@ Monitor [DeepSeek API](https://platform.deepseek.com) usage and costs directly f
 
 ### Features
 
-- **One command** — `deepseek status` shows everything: balance, monthly cost, today's cost, token usage, cache hit rate
-- **Per-model breakdown** — `-v` adds a table of cost by model (v4-pro, v4-flash, chat, etc.)
+- **One command** — `deepseek status` shows everything: balance, period cost, API requests, tokens, per-model breakdown
+- **Time range control** — `--period 30d` for last 30 days, `--period this-month` for this month, etc.
+  - Or just run `deepseek status` and pick interactively (including a calendar date picker for custom ranges)
 - **Machine-readable** — `--json` outputs raw data for scripting / piping
+- **Daily breakdown** — `-v` adds a table of daily cost, requests, and tokens
 - **WeChat QR login** — scan a QR straight from your terminal, no copy-paste of tokens
 - **Single binary** — ~7 MB, statically linked, zero runtime dependencies
 
@@ -31,40 +33,30 @@ Monitor [DeepSeek API](https://platform.deepseek.com) usage and costs directly f
 $ deepseek login
 # QR code renders in terminal → scan with WeChat → logged in
 
-$ deepseek status -v
+$ deepseek status --period 30d
   DeepSeek Usage · 2026-06-13 CST
 
-╭──────────────┬───────────╮
-│ Item         │ Amount    │
-├──────────────┼───────────┤
-│ Balance      │ ¥8.77 CNY │
-│ Monthly Cost │ ¥1.39     │
-│ Today Cost   │ ¥0.00     │
-╰──────────────┴───────────╯
+╭──────────────┬────────────╮
+│ Item         │ Amount     │
+├──────────────┼────────────┤
+│ Balance      │ ¥78.14 CNY │
+│ Period Cost  │ ¥26.04     │
+│ API Requests │ 2,782      │
+│ Tokens       │ 275.65M    │
+╰──────────────┴────────────╯
 
-  Today's Cost by Model
+  Usage by Model
 
-╭───────────────────────────────────┬───────╮
-│ Model                             │ Cost  │
-├───────────────────────────────────┼───────┤
-│ deepseek-v4-pro                   │ ¥0.00 │
-│ deepseek-v4-flash                 │ ¥0.00 │
-│ deepseek-chat & deepseek-reasoner │ ¥0.00 │
-╰───────────────────────────────────┴───────╯
+╭───────────────────────────────────┬───────┬─────────────┬──────────╮
+│ Model                             │ Cost  │ ApiRequests │ Tokens   │
+├───────────────────────────────────┼───────┼─────────────┼──────────┤
+│ deepseek-v4-pro                   │ ¥18.04│ 1,158       │ 151.66M  │
+│ deepseek-v4-flash                 │ ¥8.00 │ 1,624       │ 123.99M  │
+│ deepseek-chat & deepseek-reasoner │ ¥0.00 │ 0           │ 0        │
+╰───────────────────────────────────┴───────┴─────────────┴──────────╯
 
-  Today's Token Usage (44.85M)
-
-╭────────────────────┬──────────╮
-│ Type               │ Count    │
-├────────────────────┼──────────┤
-│ Input (Cache Hit)  │ 43.86M   │
-│ Input (Cache Miss) │ 718.7K   │
-│ Output             │ 270.8K   │
-│ API Requests       │ 4,528    │
-╰────────────────────┴──────────╯
-
-  Cache Hit Rate: 98.4%
-  Updated: 2026-06-13 18:30:00 CST
+$ deepseek status --period 30d -v
+  ...adds daily breakdown table with date, cost, requests, tokens per day
 ```
 
 ## Install
@@ -91,15 +83,20 @@ deepseek completions fish > ~/.config/fish/completions/deepseek.fish
 
 ## Commands
 
-| Command                        | Description                      |
-| ------------------------------ | -------------------------------- |
-| `deepseek status`              | Usage dashboard                  |
-| `deepseek status -v`           | Add per-model cost table         |
-| `deepseek status --json`       | Output as JSON (for scripting)   |
-| `deepseek login`               | WeChat QR authentication         |
-| `deepseek token`               | Paste session token manually     |
-| `deepseek logout`              | Clear stored credentials         |
-| `deepseek completions <SHELL>` | Generate shell completion script |
+| Command                                               | Description                           |
+| ----------------------------------------------------- | ------------------------------------- |
+| `deepseek status`                                     | Usage dashboard (interactive prompt)  |
+| `deepseek status --period 30d`                        | Last 30 days                          |
+| `deepseek status --period this-month`                 | Current month                         |
+| `deepseek status --period last-month`                 | Previous month                        |
+| `deepseek status --start YYYY-MM-DD --end YYYY-MM-DD` | Custom date range (max 30 days)       |
+| `deepseek status -v`                                  | Add daily breakdown table             |
+| `deepseek status --json`                              | Output as JSON (for scripting)        |
+| `deepseek status --no-interactive`                    | Disable interactive prompts (CI/pipe) |
+| `deepseek login`                                      | WeChat QR authentication              |
+| `deepseek token`                                      | Paste session token manually          |
+| `deepseek logout`                                     | Clear stored credentials              |
+| `deepseek completions <SHELL>`                        | Generate shell completion script      |
 
 ## Authentication
 
@@ -122,13 +119,14 @@ The token is validated against the API before saving.
 
 ## How it works
 
-Three API endpoints (all `GET`, Bearer auth):
+Four API endpoints (all `GET`, Bearer auth, browser User-Agent):
 
-| Endpoint                              | Provides                                         |
-| ------------------------------------- | ------------------------------------------------ |
-| `/api/v0/users/get_user_summary`      | Balance, currency, monthly cost, wallet info     |
-| `/api/v0/usage/cost?month=M&year=Y`   | Daily cost per model                             |
-| `/api/v0/usage/amount?month=M&year=Y` | Daily token volume, cache hit/miss, API requests |
+| Endpoint                                             | Provides                                                |
+| ---------------------------------------------------- | ------------------------------------------------------- |
+| `/api/v0/users/get_user_summary`                     | Balance, currency, monthly cost, wallet info            |
+| `/api/v0/usage/by_api_key/cost?start=S&end=E&tz=0`   | Daily cost per model for a time range (Unix timestamps) |
+| `/api/v0/usage/by_api_key/amount?start=S&end=E&tz=0` | Daily token volume, cache hit/miss, API requests        |
+| `/api/v0/users/get_api_keys`                         | List of API keys                                        |
 
 The login flow:
 

@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use crate::Result;
-use crate::constants::{API_SUCCESS_CODE, API_TIMEOUT_SECS, DEEPSEEK_API_BASE, TOKEN_EXPIRED_CODE};
+use crate::constants::{
+    API_SUCCESS_CODE, API_TIMEOUT_SECS, BROWSER_USER_AGENT, DEEPSEEK_API_BASE, TOKEN_EXPIRED_CODE,
+};
 use crate::error::DeepSeekError;
 use crate::types::*;
 
@@ -40,15 +42,66 @@ impl ApiClient {
     pub fn get_usage_cost(&self, token: &str, month: i32, year: i32) -> Result<CostResponse> {
         let path = format!("/usage/cost?month={}&year={}", month, year);
         let data = self.request_json(token, &path)?;
-        let data = try_unwrap_biz(data);
+        let data = try_unwrap_biz(data)?;
         parse_cost_response(data)
     }
 
     pub fn get_usage_amount(&self, token: &str, month: i32, year: i32) -> Result<AmountResponse> {
         let path = format!("/usage/amount?month={}&year={}", month, year);
         let data = self.request_json(token, &path)?;
-        let data = try_unwrap_biz(data);
+        let data = try_unwrap_biz(data)?;
         parse_amount_response(data)
+    }
+
+    /// Get list of API keys.
+    pub fn get_api_keys(&self, token: &str) -> Result<ApiKeysResponse> {
+        self.request(token, "/users/get_api_keys")
+    }
+
+    /// Get usage amount grouped by API key for a time range.
+    /// Uses Unix timestamps for start/end.
+    pub fn get_usage_by_key_amount(
+        &self,
+        token: &str,
+        start: i64,
+        end: i64,
+        tz: i32,
+    ) -> Result<ByApiKeyAmountResponse> {
+        let path = format!(
+            "/usage/by_api_key/amount?start={}&end={}&tz={}",
+            start, end, tz
+        );
+        let data = self.request_json(token, &path)?;
+        let data = try_unwrap_biz(data)?;
+        serde_json::from_value(data).map_err(|e| {
+            DeepSeekError::Parse(format!(
+                "failed to deserialize by_api_key amount response: {}",
+                e
+            ))
+        })
+    }
+
+    /// Get usage cost grouped by API key for a time range.
+    /// Uses Unix timestamps for start/end.
+    pub fn get_usage_by_key_cost(
+        &self,
+        token: &str,
+        start: i64,
+        end: i64,
+        tz: i32,
+    ) -> Result<ByApiKeyCostResponse> {
+        let path = format!(
+            "/usage/by_api_key/cost?start={}&end={}&tz={}",
+            start, end, tz
+        );
+        let data = self.request_json(token, &path)?;
+        let data = try_unwrap_biz(data)?;
+        serde_json::from_value(data).map_err(|e| {
+            DeepSeekError::Parse(format!(
+                "failed to deserialize by_api_key cost response: {}",
+                e
+            ))
+        })
     }
 
     /// Generic request returning a deserialized T from the data field.
@@ -66,7 +119,7 @@ impl ApiClient {
             .get(&url)
             .header("Authorization", &format!("Bearer {}", token))
             .header("Accept", "application/json")
-            .header("User-Agent", "deepseek-cli/0.1")
+            .header("User-Agent", BROWSER_USER_AGENT)
             .call()
             .map_err(DeepSeekError::from)?;
 
@@ -104,12 +157,27 @@ impl ApiClient {
 }
 
 /// If data has a `biz_data` field, extract it. Otherwise return data as-is.
-/// Does NOT validate biz_code — just extracts the inner value.
-fn try_unwrap_biz(data: serde_json::Value) -> serde_json::Value {
-    if let Some(inner) = data.get("biz_data") {
-        return inner.clone();
+/// Validates biz_code — returns an error if the business code is non-zero.
+fn try_unwrap_biz(data: serde_json::Value) -> Result<serde_json::Value> {
+    // Check for biz_data wrapper
+    if let Some(biz_code) = data.get("biz_code").and_then(|c| c.as_i64())
+        && biz_code != 0
+    {
+        let msg = data
+            .get("biz_msg")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown business error")
+            .to_string();
+        return Err(DeepSeekError::ApiBizError {
+            code: biz_code as i32,
+            msg,
+        });
     }
-    data
+    // Extract biz_data if present
+    if let Some(inner) = data.get("biz_data") {
+        return Ok(inner.clone());
+    }
+    Ok(data)
 }
 
 /// Unwrap biz_data wrapper if present, otherwise deserialize data directly.

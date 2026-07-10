@@ -1,4 +1,4 @@
-use crate::data::{format_cost, format_tokens};
+use crate::data::{format_cost, format_number, format_tokens};
 use crate::types::AggregatedData;
 use tabled::Table;
 use tabled::settings::Style;
@@ -23,63 +23,54 @@ pub fn show_usage(data: &AggregatedData, verbose: bool) {
             ),
         },
         SummaryRow {
-            item: "Monthly Cost",
-            amount: format_cost(data.monthly_cost, &data.currency),
+            item: "Period Cost",
+            amount: format_cost(data.period_cost, &data.currency),
         },
         SummaryRow {
-            item: "Today Cost",
-            amount: format_cost(data.today_cost, &data.currency),
+            item: "API Requests",
+            amount: format_number(data.period_api_requests),
+        },
+        SummaryRow {
+            item: "Tokens",
+            amount: format_tokens(data.period_tokens),
         },
     ];
     println!("{}", Table::new(summary_rows).with(Style::rounded()));
 
     // ── Model breakdown ──────────────────────────────────
-    if verbose && !data.today_cost_by_model.is_empty() {
+    if !data.models.is_empty() {
         println!();
-        println!("  Today's Cost by Model");
+        println!("  Usage by Model");
         println!();
         let model_rows: Vec<ModelRow> = data
-            .today_cost_by_model
+            .models
             .iter()
             .map(|m| ModelRow {
                 model: m.name.clone(),
                 cost: format_cost(m.cost, &data.currency),
+                api_requests: format_number(m.api_requests),
+                tokens: format_tokens(m.tokens),
             })
             .collect();
         println!("{}", Table::new(model_rows).with(Style::rounded()));
     }
 
-    // ── Token usage ──────────────────────────────────────
-    println!();
-    println!(
-        "  Today's Token Usage ({})",
-        format_tokens(data.today_tokens.total)
-    );
-    println!();
-    let token_rows = vec![
-        TokenRow {
-            metric_type: "Input (Cache Hit)",
-            count: format_tokens(data.today_tokens.input_cache_hit),
-        },
-        TokenRow {
-            metric_type: "Input (Cache Miss)",
-            count: format_tokens(data.today_tokens.input_cache_miss),
-        },
-        TokenRow {
-            metric_type: "Output",
-            count: format_tokens(data.today_tokens.output),
-        },
-        TokenRow {
-            metric_type: "API Requests",
-            count: format_tokens(data.today_api_requests),
-        },
-    ];
-    println!("{}", Table::new(token_rows).with(Style::rounded()));
-
-    if data.today_tokens.total > 0 {
-        let rate = (data.today_tokens.cache_hit_rate * 100.0).round();
+    // ── Daily breakdown (verbose) ────────────────────────
+    if verbose && !data.daily_items.is_empty() {
         println!();
-        println!("  Cache Hit Rate: {}%", rate);
+        println!("  Daily Breakdown");
+        println!();
+        let daily_rows: Vec<DailyRow> = data
+            .daily_items
+            .iter()
+            .map(|d| DailyRow {
+                date: d.date.clone(),
+                cost: format_cost(d.cost, &data.currency),
+                api_requests: format_number(d.api_requests),
+                tokens: format_tokens(d.tokens),
+            })
+            .collect();
+        println!("{}", Table::new(daily_rows).with(Style::rounded()));
     }
 
     println!();
@@ -101,14 +92,17 @@ struct SummaryRow {
 struct ModelRow {
     model: String,
     cost: String,
+    api_requests: String,
+    tokens: String,
 }
 
 #[derive(tabled::Tabled)]
 #[tabled(rename_all = "PascalCase")]
-struct TokenRow {
-    #[tabled(rename = "Type")]
-    metric_type: &'static str,
-    count: String,
+struct DailyRow {
+    date: String,
+    cost: String,
+    api_requests: String,
+    tokens: String,
 }
 
 // ── QR code display ─────────────────────────────────────────

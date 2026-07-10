@@ -1,64 +1,49 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
 
+use crate::error::DeepSeekError;
 use crate::types::*;
 
-/// Aggregate raw API responses into display-ready data.
+// ── Public API ────────────────────────────────────────────────
+
+/// Aggregate raw API responses into display-ready data using the new
+/// by_api_key endpoint format.
 pub fn aggregate(
     summary: UserSummaryData,
-    cost_response: &CostResponse,
-    amount_response: &AmountResponse,
+    amount_response: &ByApiKeyAmountResponse,
+    cost_response: &ByApiKeyCostResponse,
     now: DateTime<Utc>,
 ) -> AggregatedData {
-    let today_str = now.format("%Y-%m-%d").to_string();
-
-    let currency = resolve_currency(&summary, cost_response);
+    let currency = resolve_currency(&summary);
     let balance = compute_balance(&summary, &currency);
-    let monthly_cost = compute_monthly_cost(&summary, &currency, cost_response);
 
-    let cost_items = normalize_cost_items(cost_response, &currency);
-    let amount_items = normalize_amount_items(amount_response);
+    // Flatten cost and amount data into per-day, per-model entries
+    let (daily_items, model_summaries) =
+        flatten_responses(cost_response, amount_response, &currency);
 
-    let today_cost_item = cost_items.iter().find(|item| item.date == today_str);
-    let today_amount_item = amount_items.iter().find(|item| item.date == today_str);
-
-    let today_cost = today_cost_item.map(|i| i.total).unwrap_or(0.0);
-    let today_cost_by_model = today_cost_item
-        .map(|i| i.models.clone())
-        .unwrap_or_default()
-        .into_iter()
-        .map(|m| ModelCostEntry {
-            name: m.name,
-            cost: m.cost,
-        })
-        .collect();
-
-    let token_summary = compute_token_summary(today_amount_item);
-
-    let today_api_requests = today_amount_item
-        .map(|item| item.models.iter().map(|m| m.api_requests).sum())
-        .unwrap_or(0);
+    let period_cost: f64 = daily_items.iter().map(|d| d.cost).sum();
+    let period_api_requests: u64 = daily_items.iter().map(|d| d.api_requests).sum();
+    let period_tokens: u64 = daily_items.iter().map(|d| d.tokens).sum();
 
     AggregatedData {
         balance,
         currency,
-        monthly_cost,
-        today_cost,
-        today_cost_by_model,
-        today_tokens: token_summary,
-        today_api_requests,
+        period_cost,
+        period_api_requests,
+        period_tokens,
+        models: model_summaries,
+        daily_items,
         last_updated: now,
     }
 }
 
-// ── Currency resolution ─────────────────────────────────────
+// ── Currency & Balance ────────────────────────────────────────
 
-fn resolve_currency(summary: &UserSummaryData, cost_response: &CostResponse) -> String {
+fn resolve_currency(summary: &UserSummaryData) -> String {
     if let Some(ref c) = summary.currency
         && !c.is_empty()
     {
         return c.clone();
     }
-    // Try wallets
     for wallet in summary
         .normal_wallets
         .iter()
@@ -69,32 +54,20 @@ fn resolve_currency(summary: &UserSummaryData, cost_response: &CostResponse) -> 
             return wallet.currency.clone();
         }
     }
-    // Try cost bucket
-    if let CostResponse::Bucketed(buckets) = cost_response
-        && let Some(bucket) = buckets.first()
-        && !bucket.currency.is_empty()
-    {
-        return bucket.currency.clone();
-    }
     "CNY".to_string()
 }
 
-// ── Balance computation ─────────────────────────────────────
-
 fn compute_balance(summary: &UserSummaryData, currency: &str) -> f64 {
-    // If total_balance is explicitly set and non-zero, use it
     if let Some(b) = summary.total_balance
         && b > 0.0
     {
         return b;
     }
-    // topped_up_balance + granted_balance from UserSummaryData
     let topup = summary.topped_up_balance.unwrap_or(0.0);
     let granted = summary.granted_balance.unwrap_or(0.0);
     if topup + granted > 0.0 {
         return topup + granted;
     }
-    // Fallback: sum wallets matching the currency
     sum_wallets(
         summary.normal_wallets.as_deref(),
         summary.bonus_wallets.as_deref(),
@@ -114,137 +87,127 @@ fn sum_wallets(
         .chain(bonus.into_iter().flatten())
     {
         if wallet.currency == currency {
-            total += to_f64(&wallet.balance);
+            total += wallet_balance_f64(&wallet.balance);
         }
     }
     total
 }
 
-// ── Monthly cost computation ────────────────────────────────
+fn wallet_balance_f64(v: &serde_json::Value) -> f64 {
+    match v {
+        serde_json::Value::Number(n) => n.as_f64().unwrap_or(0.0),
+        serde_json::Value::String(s) => s.parse::<f64>().unwrap_or(0.0),
+        _ => 0.0,
+    }
+}
 
-fn compute_monthly_cost(
-    summary: &UserSummaryData,
-    currency: &str,
-    cost_response: &CostResponse,
-) -> f64 {
-    if let Some(cost) = summary.month_cost {
-        return cost;
+// ── Response flattening ───────────────────────────────────────
+
+/// Flatten the new by_api_key response format into per-day items and per-model summaries.
+fn flatten_responses(
+    cost: &ByApiKeyCostResponse,
+    amount: &ByApiKeyAmountResponse,
+    _currency: &str,
+) -> (Vec<DailyItem>, Vec<ModelPeriodSummary>) {
+    // Build a map: (date, model) -> (cost, api_requests, tokens)
+    use std::collections::HashMap;
+
+    #[derive(Default)]
+    struct DayModelEntry {
+        cost: f64,
+        api_requests: u64,
+        tokens: u64,
     }
-    if let Some(costs) = &summary.monthly_costs {
-        let matched = costs
-            .iter()
-            .find(|c| c.currency == currency)
-            .or_else(|| costs.first());
-        if let Some(c) = matched {
-            return to_f64(&c.amount);
-        }
-    }
-    // Fallback: sum from cost bucket total
-    match cost_response {
-        CostResponse::Bucketed(buckets) => {
-            let bucket = pick_cost_bucket(Some(buckets), currency);
-            if let Some(b) = bucket {
-                return sum_model_entries(&b.total);
+
+    let mut entries: HashMap<(String, String), DayModelEntry> = HashMap::new();
+    let date_formatter = |ts: i64| {
+        // Convert unix timestamp to YYYY-MM-DD in UTC
+        let secs = ts;
+        let days = secs / 86400;
+        // 1970-01-01 is day 0
+        let d = chrono::NaiveDate::from_ymd_opt(1970, 1, 1)
+            .unwrap()
+            .checked_add_signed(chrono::Duration::days(days))
+            .unwrap();
+        d.format("%Y-%m-%d").to_string()
+    };
+
+    // Flatten cost data: cost_response.data[].series[].buckets[]
+    for group in &cost.data {
+        for series in &group.series {
+            let model = series.model.clone();
+            for bucket in &series.buckets {
+                let date = date_formatter(bucket.time);
+                let cost_val = bucket.cost.parse::<f64>().unwrap_or(0.0);
+                let entry = entries.entry((date.clone(), model.clone())).or_default();
+                entry.cost += cost_val;
             }
         }
-        CostResponse::Flat(flat) => {
-            return flat.items.iter().map(|i| i.total).sum();
+    }
+
+    // Flatten amount data: amount_response.series[].buckets[]
+    for series in &amount.series {
+        let model = series.model.clone();
+        for bucket in &series.buckets {
+            let date = date_formatter(bucket.time);
+            let entry = entries.entry((date.clone(), model.clone())).or_default();
+            entry.api_requests += bucket.usage.request;
+            entry.tokens += bucket.usage.total();
         }
     }
-    0.0
-}
 
-// ── Cost normalization ──────────────────────────────────────
+    // Build daily items sorted by date
+    let mut daily_map: HashMap<String, DailyItem> = HashMap::new();
+    for ((date, model), entry) in entries {
+        let day = daily_map.entry(date.clone()).or_insert_with(|| DailyItem {
+            date,
+            cost: 0.0,
+            api_requests: 0,
+            tokens: 0,
+            models: Vec::new(),
+        });
+        day.cost += entry.cost;
+        day.api_requests += entry.api_requests;
+        day.tokens += entry.tokens;
+        day.models.push(ModelPeriodSummary {
+            name: model,
+            cost: entry.cost,
+            api_requests: entry.api_requests,
+            tokens: entry.tokens,
+        });
+    }
 
-fn normalize_cost_items(cost: &CostResponse, currency: &str) -> Vec<CostFlatItem> {
-    match cost {
-        CostResponse::Flat(flat) => flat.items.clone(),
-        CostResponse::Bucketed(buckets) => {
-            let bucket = match pick_cost_bucket(Some(buckets), currency) {
-                Some(b) => b,
-                None => return vec![],
-            };
-            bucket
-                .days
-                .iter()
-                .map(|day| {
-                    let models: Vec<ModelCostPayload> = day
-                        .data
-                        .iter()
-                        .map(|entry| ModelCostPayload {
-                            name: entry.model.clone(),
-                            cost: sum_usage(&entry.usage),
-                        })
-                        .collect();
-                    let total = models.iter().map(|m| m.cost).sum();
-                    CostFlatItem {
-                        date: day.date.clone(),
-                        models,
-                        total,
-                    }
-                })
-                .collect()
+    let mut daily_items: Vec<DailyItem> = daily_map.into_values().collect();
+    daily_items.sort_by(|a, b| a.date.cmp(&b.date));
+
+    // Build per-model summaries
+    let mut model_map: HashMap<String, ModelPeriodSummary> = HashMap::new();
+    for day in &daily_items {
+        for m in &day.models {
+            let entry = model_map
+                .entry(m.name.clone())
+                .or_insert(ModelPeriodSummary {
+                    name: m.name.clone(),
+                    cost: 0.0,
+                    api_requests: 0,
+                    tokens: 0,
+                });
+            entry.cost += m.cost;
+            entry.api_requests += m.api_requests;
+            entry.tokens += m.tokens;
         }
     }
+    let mut model_summaries: Vec<ModelPeriodSummary> = model_map.into_values().collect();
+    model_summaries.sort_by(|a, b| {
+        b.cost
+            .partial_cmp(&a.cost)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    (daily_items, model_summaries)
 }
 
-// ── Amount normalization ────────────────────────────────────
-
-fn normalize_amount_items(amount: &AmountResponse) -> Vec<AmountFlatItem> {
-    match amount {
-        AmountResponse::Flat(flat) => flat.items.clone(),
-        AmountResponse::Bucketed(bucket) => bucket
-            .days
-            .iter()
-            .map(|day| {
-                let models: Vec<ModelAmountPayload> = day
-                    .data
-                    .iter()
-                    .map(|entry| ModelAmountPayload {
-                        name: entry.model.clone(),
-                        input_cache_hit: get_usage_amount(&entry.usage, "PROMPT_CACHE_HIT_TOKEN"),
-                        input_cache_miss: get_usage_amount(&entry.usage, "PROMPT_CACHE_MISS_TOKEN"),
-                        output: get_usage_amount(&entry.usage, "RESPONSE_TOKEN"),
-                        api_requests: get_usage_amount(&entry.usage, "REQUEST"),
-                    })
-                    .collect();
-                AmountFlatItem {
-                    date: day.date.clone(),
-                    models,
-                }
-            })
-            .collect(),
-    }
-}
-
-// ── Token computation ───────────────────────────────────────
-
-fn compute_token_summary(amount_item: Option<&AmountFlatItem>) -> TokenSummary {
-    let (mut cache_hit, mut cache_miss, mut output) = (0u64, 0u64, 0u64);
-    if let Some(item) = amount_item {
-        for model in &item.models {
-            cache_hit += model.input_cache_hit;
-            cache_miss += model.input_cache_miss;
-            output += model.output;
-        }
-    }
-    let total = cache_hit + cache_miss + output;
-    let total_input = cache_hit + cache_miss;
-    let cache_hit_rate = if total_input > 0 {
-        cache_hit as f64 / total_input as f64
-    } else {
-        0.0
-    };
-    TokenSummary {
-        input_cache_hit: cache_hit,
-        input_cache_miss: cache_miss,
-        output,
-        total,
-        cache_hit_rate,
-    }
-}
-
-// ── Utility helpers ─────────────────────────────────────────
+// ── Utility helpers ──────────────────────────────────────────
 
 pub fn format_cost(n: f64, currency: &str) -> String {
     let symbol = if currency == "CNY" { "¥" } else { "$" };
@@ -263,40 +226,106 @@ pub fn format_tokens(n: u64) -> String {
     }
 }
 
-fn to_f64(value: &serde_json::Value) -> f64 {
-    match value {
-        serde_json::Value::Number(n) => n.as_f64().unwrap_or(0.0),
-        serde_json::Value::String(s) => s.parse::<f64>().unwrap_or(0.0),
-        _ => 0.0,
+pub fn format_number(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.2}M", n as f64 / 1_000_000.0)
+    } else {
+        n.to_string()
     }
 }
 
-fn sum_usage(usage: &[UsageMetric]) -> f64 {
-    usage.iter().map(|u| to_f64(&u.amount)).sum()
+// ── Time range helpers ────────────────────────────────────────
+
+/// Compute start/end Unix timestamps for a given period option.
+/// Start is midnight UTC of the first day, end is midnight UTC of the day after the last day.
+pub fn compute_time_range(period: &str) -> (i64, i64) {
+    let now = Utc::now();
+    let today = now.date_naive();
+
+    match period {
+        "7d" => {
+            let start = today - chrono::Duration::days(6);
+            let end = today + chrono::Duration::days(1);
+            (
+                start.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
+                end.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
+            )
+        }
+        "30d" => {
+            let start = today - chrono::Duration::days(29);
+            let end = today + chrono::Duration::days(1);
+            (
+                start.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
+                end.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
+            )
+        }
+        "this-month" => {
+            let start = today.with_day(1).unwrap();
+            let end = today + chrono::Duration::days(1);
+            (
+                start.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
+                end.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
+            )
+        }
+        "last-month" => {
+            let first_this_month = today.with_day(1).unwrap();
+            let last_month_end = first_this_month - chrono::Duration::days(1);
+            let last_month_start = last_month_end.with_day(1).unwrap();
+            let next_month_start = first_this_month; // first day of this month = day after last month
+            (
+                last_month_start
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap()
+                    .and_utc()
+                    .timestamp(),
+                next_month_start
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap()
+                    .and_utc()
+                    .timestamp(),
+            )
+        }
+        _ => {
+            // Default: last 7 days
+            let start = today - chrono::Duration::days(6);
+            let end = today + chrono::Duration::days(1);
+            (
+                start.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
+                end.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
+            )
+        }
+    }
 }
 
-fn sum_model_entries(entries: &[ModelUsageEntry]) -> f64 {
-    entries.iter().map(|e| sum_usage(&e.usage)).sum()
+/// Compute start/end Unix timestamps from explicit YYYY-MM-DD dates.
+/// End is exclusive (midnight of the day after the selected end date).
+pub fn compute_time_range_from_dates(
+    start_str: &str,
+    end_str: &str,
+) -> Result<(i64, i64), DeepSeekError> {
+    let start = chrono::NaiveDate::parse_from_str(start_str, "%Y-%m-%d")
+        .map_err(|e| DeepSeekError::Parse(format!("invalid start date '{}': {}", start_str, e)))?;
+    let end = chrono::NaiveDate::parse_from_str(end_str, "%Y-%m-%d")
+        .map_err(|e| DeepSeekError::Parse(format!("invalid end date '{}': {}", end_str, e)))?;
+
+    if end < start {
+        return Err(DeepSeekError::Parse(format!(
+            "end date {} is before start date {}",
+            end_str, start_str
+        )));
+    }
+
+    let start_ts = start.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+    let end_exclusive = end + chrono::Duration::days(1);
+    let end_ts = end_exclusive
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_utc()
+        .timestamp();
+
+    Ok((start_ts, end_ts))
 }
 
-fn get_usage_amount(usage: &[UsageMetric], metric_type: &str) -> u64 {
-    usage
-        .iter()
-        .find(|u| u.metric_type == metric_type)
-        .map(|u| to_f64(&u.amount) as u64)
-        .unwrap_or(0)
-}
-
-fn pick_cost_bucket<'a>(
-    buckets: Option<&'a Vec<CostBucket>>,
-    currency: &str,
-) -> Option<&'a CostBucket> {
-    let buckets = buckets?;
-    buckets
-        .iter()
-        .find(|b| b.currency == currency)
-        .or_else(|| buckets.first())
-}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -323,127 +352,103 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_token_summary_empty() {
-        let summary = compute_token_summary(None);
-        assert_eq!(summary.total, 0);
-        assert_eq!(summary.cache_hit_rate, 0.0);
+    fn test_format_number() {
+        assert_eq!(format_number(0), "0");
+        assert_eq!(format_number(500), "500");
+        assert_eq!(format_number(1_500), "1500");
+        assert_eq!(format_number(2_782), "2782");
+        assert_eq!(format_number(275_649_934), "275.65M");
     }
 
     #[test]
-    fn test_compute_token_summary_mixed() {
-        let item = AmountFlatItem {
-            date: "2026-06-13".into(),
-            models: vec![
-                ModelAmountPayload {
-                    name: "deepseek-chat".into(),
-                    input_cache_hit: 1000,
-                    input_cache_miss: 500,
-                    output: 300,
-                    api_requests: 10,
-                },
-                ModelAmountPayload {
-                    name: "deepseek-reasoner".into(),
-                    input_cache_hit: 2000,
-                    input_cache_miss: 1000,
-                    output: 700,
-                    api_requests: 5,
-                },
-            ],
-        };
-        let summary = compute_token_summary(Some(&item));
-        assert_eq!(summary.input_cache_hit, 3000);
-        assert_eq!(summary.input_cache_miss, 1500);
-        assert_eq!(summary.output, 1000);
-        assert_eq!(summary.total, 5500);
-        assert!((summary.cache_hit_rate - 0.6666).abs() < 0.01);
+    fn test_compute_time_range_7d() {
+        let (start, end) = compute_time_range("7d");
+        // End should be midnight of next day (up to 24h ahead of now)
+        assert!(end >= Utc::now().timestamp());
+        assert!(end - Utc::now().timestamp() <= 86400 + 5);
+        // Range should be 7 days
+        assert!((end - start - 7 * 86400).abs() < 2);
     }
 
     #[test]
-    fn test_compute_token_summary_all_miss() {
-        let item = AmountFlatItem {
-            date: "2026-06-13".into(),
-            models: vec![ModelAmountPayload {
-                name: "test".into(),
-                input_cache_hit: 0,
-                input_cache_miss: 100,
-                output: 50,
-                api_requests: 1,
-            }],
-        };
-        let summary = compute_token_summary(Some(&item));
-        assert_eq!(summary.cache_hit_rate, 0.0);
+    fn test_compute_time_range_30d() {
+        let (start, end) = compute_time_range("30d");
+        assert!((end - start - 30 * 86400).abs() < 2);
     }
 
     #[test]
-    fn test_compute_token_summary_all_hit() {
-        let item = AmountFlatItem {
-            date: "2026-06-13".into(),
-            models: vec![ModelAmountPayload {
-                name: "test".into(),
-                input_cache_hit: 100,
-                input_cache_miss: 0,
-                output: 50,
-                api_requests: 1,
-            }],
-        };
-        let summary = compute_token_summary(Some(&item));
-        assert_eq!(summary.cache_hit_rate, 1.0);
+    fn test_compute_time_range_default() {
+        let (start, end) = compute_time_range("unknown");
+        // Default should be 7d
+        assert!((end - start - 7 * 86400).abs() < 2);
     }
 
     #[test]
-    fn test_resolve_currency_from_summary() {
+    fn test_aggregate_basic() {
         let summary = UserSummaryData {
-            currency: Some("USD".into()),
+            total_balance: Some(32.72),
+            currency: Some("CNY".into()),
             ..Default::default()
         };
-        assert_eq!(
-            resolve_currency(&summary, &CostResponse::Bucketed(vec![])),
-            "USD"
-        );
-    }
 
-    #[test]
-    fn test_resolve_currency_from_wallet() {
-        let summary = UserSummaryData {
-            currency: None,
-            normal_wallets: Some(vec![WalletBalance {
-                currency: "EUR".into(),
-                balance: serde_json::Value::Number(serde_json::Number::from(100)),
-                token_estimation: None,
-            }]),
-            ..Default::default()
-        };
-        assert_eq!(
-            resolve_currency(&summary, &CostResponse::Bucketed(vec![])),
-            "EUR"
-        );
-    }
-
-    #[test]
-    fn test_resolve_currency_fallback_cny() {
-        let summary = UserSummaryData::default();
-        assert_eq!(
-            resolve_currency(&summary, &CostResponse::Bucketed(vec![])),
-            "CNY"
-        );
-    }
-
-    #[test]
-    fn test_normalize_cost_items_flat() {
-        let flat = CostFlat {
-            month: 6,
-            year: 2026,
-            items: vec![CostFlatItem {
-                date: "2026-06-13".into(),
-                models: vec![ModelCostPayload {
-                    name: "deepseek-chat".into(),
-                    cost: 5.76,
+        let amount = ByApiKeyAmountResponse {
+            start: 0,
+            end: 0,
+            bucket: 86400,
+            models: vec!["deepseek-v4-pro".into()],
+            series: vec![AmountSeriesItem {
+                api_key: ApiKeyMeta {
+                    tracking_id: "test".into(),
+                    name: "test-key".into(),
+                    sensitive_id: "sk-test".into(),
+                    valid: true,
+                },
+                model: "deepseek-v4-pro".into(),
+                buckets: vec![AmountBucket {
+                    time: 0, // 1970-01-01
+                    usage: UsageMetrics {
+                        response_token: 1000,
+                        request: 5,
+                        prompt_cache_hit_token: 5000,
+                        prompt_cache_miss_token: 500,
+                    },
                 }],
-                total: 5.76,
             }],
         };
-        let result = normalize_cost_items(&CostResponse::Flat(flat), "CNY");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].total, 5.76);
+
+        let cost = ByApiKeyCostResponse {
+            start: 0,
+            end: 0,
+            bucket: 86400,
+            models: vec!["deepseek-v4-pro".into()],
+            data: vec![CostCurrencyGroup {
+                currency: "CNY".into(),
+                series: vec![CostSeriesItem {
+                    api_key: ApiKeyMeta {
+                        tracking_id: "test".into(),
+                        name: "test-key".into(),
+                        sensitive_id: "sk-test".into(),
+                        valid: true,
+                    },
+                    model: "deepseek-v4-pro".into(),
+                    buckets: vec![NewCostBucket {
+                        time: 0,
+                        cost: "1.50".into(),
+                    }],
+                }],
+            }],
+        };
+
+        let result = aggregate(summary, &amount, &cost, Utc::now());
+        assert_eq!(result.balance, 32.72);
+        assert_eq!(result.currency, "CNY");
+        assert_eq!(result.period_cost, 1.50);
+        assert_eq!(result.period_api_requests, 5);
+        assert_eq!(result.period_tokens, 6500);
+        assert_eq!(result.models.len(), 1);
+        assert_eq!(result.models[0].name, "deepseek-v4-pro");
+        assert_eq!(result.models[0].cost, 1.50);
+        assert_eq!(result.models[0].api_requests, 5);
+        assert_eq!(result.models[0].tokens, 6500);
     }
 }

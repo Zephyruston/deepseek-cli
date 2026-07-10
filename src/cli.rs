@@ -14,14 +14,28 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Show usage summary (balance, monthly cost, today cost, token usage)
+    /// Show usage summary (balance, period cost, API requests, tokens, model breakdown)
     Status {
-        /// Show per-model cost breakdown
+        /// Time period to display
+        /// 7d = last 7 days (default), 30d = last 30 days,
+        /// this-month, last-month, custom
+        #[arg(short, long)]
+        period: Option<String>,
+        /// Start date for custom range (YYYY-MM-DD). Requires --end.
+        #[arg(long)]
+        start: Option<String>,
+        /// End date for custom range (YYYY-MM-DD). Requires --start.
+        #[arg(long)]
+        end: Option<String>,
+        /// Show per-model breakdown and daily details
         #[arg(short, long)]
         verbose: bool,
         /// Output as JSON instead of table
         #[arg(long)]
         json: bool,
+        /// Disable interactive prompts (use defaults)
+        #[arg(long)]
+        no_interactive: bool,
     },
 
     /// Log in with WeChat QR code

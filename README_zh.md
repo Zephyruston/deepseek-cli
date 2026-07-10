@@ -19,8 +19,10 @@
 
 ### 功能
 
-- **一行命令看全部** — `deepseek status` 显示余额、月消费、日消费、Token 用量、缓存命中率
-- **按模型拆分** — `-v` 追加各模型费用明细（v4-pro、v4-flash、chat 等）
+- **一行命令看全部** — `deepseek status` 显示余额、周期消费、API 请求数、Token 用量、各模型明细
+- **时间范围控制** — `--period 30d` 查看近 30 天，`--period this-month` 查看本月，`--period last-month` 查看上月
+  - 或不加参数，运行 `deepseek status` 后交互选择
+- **每日明细** — `-v` 追加每日费用、请求数、Token 用量表格
 - **机器可读** — `--json` 输出原始数据，便于脚本处理
 - **微信扫码登录** — 终端直接渲染二维码，扫码即登录
 - **单文件二进制** — 约 7 MB，静态链接，无需任何运行时
@@ -31,40 +33,30 @@
 $ deepseek login
 # 终端渲染二维码 → 微信扫描 → 登录成功
 
-$ deepseek status -v
+$ deepseek status --period 30d
   DeepSeek Usage · 2026-06-13 CST
 
-╭──────────────┬───────────╮
-│ Item         │ Amount    │
-├──────────────┼───────────┤
-│ Balance      │ ¥8.77 CNY │
-│ Monthly Cost │ ¥1.39     │
-│ Today Cost   │ ¥0.00     │
-╰──────────────┴───────────╯
+╭──────────────┬────────────╮
+│ Item         │ Amount     │
+├──────────────┼────────────┤
+│ Balance      │ ¥78.14 CNY │
+│ Period Cost  │ ¥26.04     │
+│ API Requests │ 2,782      │
+│ Tokens       │ 275.65M    │
+╰──────────────┴────────────╯
 
-  Today's Cost by Model
+  Usage by Model
 
-╭───────────────────────────────────┬───────╮
-│ Model                             │ Cost  │
-├───────────────────────────────────┼───────┤
-│ deepseek-v4-pro                   │ ¥0.00 │
-│ deepseek-v4-flash                 │ ¥0.00 │
-│ deepseek-chat & deepseek-reasoner │ ¥0.00 │
-╰───────────────────────────────────┴───────╯
+╭───────────────────────────────────┬───────┬─────────────┬──────────╮
+│ Model                             │ Cost  │ ApiRequests │ Tokens   │
+├───────────────────────────────────┼───────┼─────────────┼──────────┤
+│ deepseek-v4-pro                   │ ¥18.04│ 1,158       │ 151.66M  │
+│ deepseek-v4-flash                 │ ¥8.00 │ 1,624       │ 123.99M  │
+│ deepseek-chat & deepseek-reasoner │ ¥0.00 │ 0           │ 0        │
+╰───────────────────────────────────┴───────┴─────────────┴──────────╯
 
-  Today's Token Usage (44.85M)
-
-╭────────────────────┬──────────╮
-│ Type               │ Count    │
-├────────────────────┼──────────┤
-│ Input (Cache Hit)  │ 43.86M   │
-│ Input (Cache Miss) │ 718.7K   │
-│ Output             │ 270.8K   │
-│ API Requests       │ 4,528    │
-╰────────────────────┴──────────╯
-
-  Cache Hit Rate: 98.4%
-  Updated: 2026-06-13 18:30:00 CST
+$ deepseek status --period 30d -v
+  ...追加每日明细表格：日期、费用、请求数、Token 用量
 ```
 
 ## 安装
@@ -91,16 +83,20 @@ deepseek completions fish > ~/.config/fish/completions/deepseek.fish
 
 ## 命令
 
-| 命令                           | 说明                   |
-| ------------------------------ | ---------------------- |
-| `deepseek status`              | 用量看板               |
-| `deepseek status -v`           | 含各模型费用拆分       |
-| `deepseek status --json`       | JSON 格式输出（供脚本使用） |
-| `deepseek login`               | 微信扫码登录           |
-| `deepseek token`               | 手动粘贴 session token |
-| `deepseek logout`              | 清除登录凭证           |
-| `deepseek completions <SHELL>` | 生成 shell 补全脚本    |
-| `deepseek completions <SHELL>` | 生成 shell 补全脚本    |
+| 命令                                                  | 说明                         |
+| ----------------------------------------------------- | ---------------------------- |
+| `deepseek status`                                     | 用量看板（交互选择时间范围） |
+| `deepseek status --period 30d`                        | 近 30 天                     |
+| `deepseek status --period this-month`                 | 本月                         |
+| `deepseek status --period last-month`                 | 上月                         |
+| `deepseek status --start YYYY-MM-DD --end YYYY-MM-DD` | 自定义日期范围（最多 30 天） |
+| `deepseek status -v`                                  | 含每日明细表格               |
+| `deepseek status --json`                              | JSON 格式输出                |
+| `deepseek status --no-interactive`                    | 禁用交互提示（CI/管道）      |
+| `deepseek login`                                      | 微信扫码登录                 |
+| `deepseek token`                                      | 手动粘贴 session token       |
+| `deepseek logout`                                     | 清除登录凭证                 |
+| `deepseek completions <SHELL>`                        | 生成 shell 补全脚本          |
 
 ## 认证
 
@@ -123,13 +119,14 @@ Token 存储前会调用 API 验证有效性。
 
 ## 实现原理
 
-数据来自三个 API 端点（均为 GET，Bearer 认证）：
+数据来自四个 API 端点（均为 GET，Bearer 认证，浏览器 User-Agent）：
 
-| 端点                                  | 提供                                       |
-| ------------------------------------- | ------------------------------------------ |
-| `/api/v0/users/get_user_summary`      | 余额、货币类型、月度消费、钱包信息         |
-| `/api/v0/usage/cost?month=M&year=Y`   | 按日各模型费用                             |
-| `/api/v0/usage/amount?month=M&year=Y` | 按日 Token 量、缓存命中/未命中、API 请求数 |
+| 端点                                                 | 提供                                       |
+| ---------------------------------------------------- | ------------------------------------------ |
+| `/api/v0/users/get_user_summary`                     | 余额、货币类型、月度消费、钱包信息         |
+| `/api/v0/usage/by_api_key/cost?start=S&end=E&tz=0`   | 按日各模型费用（时间范围用 Unix 时间戳）   |
+| `/api/v0/usage/by_api_key/amount?start=S&end=E&tz=0` | 按日 Token 量、缓存命中/未命中、API 请求数 |
+| `/api/v0/users/get_api_keys`                         | API Key 列表                               |
 
 登录流程：
 
