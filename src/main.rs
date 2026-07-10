@@ -84,11 +84,12 @@ fn resolve_time_range(
     }
     // JSON mode or no-interactive: use default
     if json || no_interactive {
-        return Ok(compute_time_range("7d"));
+        return Ok(compute_time_range("today"));
     }
     // Interactive prompt
     let options = vec![
-        "7d — Last 7 days (default)",
+        "today — Today (default)",
+        "7d — Last 7 days",
         "30d — Last 30 days",
         "this-month — Current month",
         "last-month — Previous month",
@@ -99,7 +100,7 @@ fn resolve_time_range(
         .with_vim_mode(false);
     match choice.prompt() {
         Ok(selected) => {
-            let key = selected.split(" — ").next().unwrap_or("7d").trim();
+            let key = selected.split(" — ").next().unwrap_or("today").trim();
             match key {
                 "custom" => prompt_custom_dates(),
                 _ => Ok(compute_time_range(key)),

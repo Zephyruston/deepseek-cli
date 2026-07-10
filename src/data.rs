@@ -21,8 +21,17 @@ pub fn aggregate(
         flatten_responses(cost_response, amount_response, &currency);
 
     let period_cost: f64 = daily_items.iter().map(|d| d.cost).sum();
+    let period_cost = if period_cost == 0.0 { 0.0 } else { period_cost }; // normalize -0.0
     let period_api_requests: u64 = daily_items.iter().map(|d| d.api_requests).sum();
     let period_tokens: u64 = daily_items.iter().map(|d| d.tokens).sum();
+    let period_output_tokens: u64 = daily_items.iter().map(|d| d.output_tokens).sum();
+    let period_cache_hit: u64 = daily_items.iter().map(|d| d.cache_hit).sum();
+    let period_cache_miss: u64 = daily_items.iter().map(|d| d.cache_miss).sum();
+    let cache_hit_rate = if period_cache_hit + period_cache_miss > 0 {
+        period_cache_hit as f64 / (period_cache_hit + period_cache_miss) as f64
+    } else {
+        0.0
+    };
 
     AggregatedData {
         balance,
@@ -30,6 +39,10 @@ pub fn aggregate(
         period_cost,
         period_api_requests,
         period_tokens,
+        period_output_tokens,
+        period_cache_hit,
+        period_cache_miss,
+        cache_hit_rate,
         models: model_summaries,
         daily_items,
         last_updated: now,
@@ -117,6 +130,9 @@ fn flatten_responses(
         cost: f64,
         api_requests: u64,
         tokens: u64,
+        output_tokens: u64,
+        cache_hit: u64,
+        cache_miss: u64,
     }
 
     let mut entries: HashMap<(String, String), DayModelEntry> = HashMap::new();
@@ -153,6 +169,9 @@ fn flatten_responses(
             let entry = entries.entry((date.clone(), model.clone())).or_default();
             entry.api_requests += bucket.usage.request;
             entry.tokens += bucket.usage.total();
+            entry.output_tokens += bucket.usage.response_token;
+            entry.cache_hit += bucket.usage.prompt_cache_hit_token;
+            entry.cache_miss += bucket.usage.prompt_cache_miss_token;
         }
     }
 
@@ -164,16 +183,25 @@ fn flatten_responses(
             cost: 0.0,
             api_requests: 0,
             tokens: 0,
+            output_tokens: 0,
+            cache_hit: 0,
+            cache_miss: 0,
             models: Vec::new(),
         });
         day.cost += entry.cost;
         day.api_requests += entry.api_requests;
         day.tokens += entry.tokens;
+        day.output_tokens += entry.output_tokens;
+        day.cache_hit += entry.cache_hit;
+        day.cache_miss += entry.cache_miss;
         day.models.push(ModelPeriodSummary {
             name: model,
             cost: entry.cost,
             api_requests: entry.api_requests,
             tokens: entry.tokens,
+            output_tokens: entry.output_tokens,
+            cache_hit: entry.cache_hit,
+            cache_miss: entry.cache_miss,
         });
     }
 
@@ -191,10 +219,16 @@ fn flatten_responses(
                     cost: 0.0,
                     api_requests: 0,
                     tokens: 0,
+                    output_tokens: 0,
+                    cache_hit: 0,
+                    cache_miss: 0,
                 });
             entry.cost += m.cost;
             entry.api_requests += m.api_requests;
             entry.tokens += m.tokens;
+            entry.output_tokens += m.output_tokens;
+            entry.cache_hit += m.cache_hit;
+            entry.cache_miss += m.cache_miss;
         }
     }
     let mut model_summaries: Vec<ModelPeriodSummary> = model_map.into_values().collect();
@@ -211,6 +245,7 @@ fn flatten_responses(
 
 pub fn format_cost(n: f64, currency: &str) -> String {
     let symbol = if currency == "CNY" { "¥" } else { "$" };
+    let n = if n == 0.0 { 0.0 } else { n }; // normalize -0.0 → 0.0
     format!("{}{:.2}", symbol, n)
 }
 
@@ -243,6 +278,14 @@ pub fn compute_time_range(period: &str) -> (i64, i64) {
     let today = now.date_naive();
 
     match period {
+        "today" => {
+            let start = today;
+            let end = today + chrono::Duration::days(1);
+            (
+                start.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
+                end.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
+            )
+        }
         "7d" => {
             let start = today - chrono::Duration::days(6);
             let end = today + chrono::Duration::days(1);
@@ -335,6 +378,7 @@ mod tests {
         assert_eq!(format_cost(5.76, "CNY"), "¥5.76");
         assert_eq!(format_cost(0.0, "CNY"), "¥0.00");
         assert_eq!(format_cost(100.0, "CNY"), "¥100.00");
+        assert_eq!(format_cost(-0.0, "CNY"), "¥0.00"); // normalize -0.0
     }
 
     #[test]
@@ -358,6 +402,21 @@ mod tests {
         assert_eq!(format_number(1_500), "1500");
         assert_eq!(format_number(2_782), "2782");
         assert_eq!(format_number(275_649_934), "275.65M");
+    }
+
+    #[test]
+    fn test_compute_time_range_today() {
+        let (start, end) = compute_time_range("today");
+        let today = Utc::now().date_naive();
+        let expected_start = today.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+        let expected_end = (today + chrono::Duration::days(1))
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        assert_eq!(start, expected_start);
+        assert_eq!(end, expected_end);
+        assert!((end - start - 86400).abs() < 2);
     }
 
     #[test]
@@ -433,7 +492,7 @@ mod tests {
                     model: "deepseek-v4-pro".into(),
                     buckets: vec![NewCostBucket {
                         time: 0,
-                        cost: "1.50".into(),
+                        cost: "0.00".into(),
                     }],
                 }],
             }],
@@ -442,13 +501,20 @@ mod tests {
         let result = aggregate(summary, &amount, &cost, Utc::now());
         assert_eq!(result.balance, 32.72);
         assert_eq!(result.currency, "CNY");
-        assert_eq!(result.period_cost, 1.50);
+        assert_eq!(result.period_cost, 0.0); // not -0.0
         assert_eq!(result.period_api_requests, 5);
         assert_eq!(result.period_tokens, 6500);
+        assert_eq!(result.period_output_tokens, 1000);
+        assert_eq!(result.period_cache_hit, 5000);
+        assert_eq!(result.period_cache_miss, 500);
+        assert!((result.cache_hit_rate - 5000.0 / 5500.0).abs() < 1e-6);
         assert_eq!(result.models.len(), 1);
         assert_eq!(result.models[0].name, "deepseek-v4-pro");
-        assert_eq!(result.models[0].cost, 1.50);
+        assert_eq!(result.models[0].cost, 0.0);
         assert_eq!(result.models[0].api_requests, 5);
         assert_eq!(result.models[0].tokens, 6500);
+        assert_eq!(result.models[0].output_tokens, 1000);
+        assert_eq!(result.models[0].cache_hit, 5000);
+        assert_eq!(result.models[0].cache_miss, 500);
     }
 }

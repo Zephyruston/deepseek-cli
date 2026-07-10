@@ -10,6 +10,10 @@ pub struct AggregatedData {
     pub period_cost: f64,
     pub period_api_requests: u64,
     pub period_tokens: u64,
+    pub period_cache_hit: u64,
+    pub period_cache_miss: u64,
+    pub period_output_tokens: u64,
+    pub cache_hit_rate: f64,
     pub models: Vec<ModelPeriodSummary>,
     pub daily_items: Vec<DailyItem>,
     pub last_updated: DateTime<Utc>,
@@ -21,6 +25,9 @@ pub struct ModelPeriodSummary {
     pub cost: f64,
     pub api_requests: u64,
     pub tokens: u64,
+    pub output_tokens: u64,
+    pub cache_hit: u64,
+    pub cache_miss: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -29,6 +36,9 @@ pub struct DailyItem {
     pub cost: f64,
     pub api_requests: u64,
     pub tokens: u64,
+    pub output_tokens: u64,
+    pub cache_hit: u64,
+    pub cache_miss: u64,
     pub models: Vec<ModelPeriodSummary>,
 }
 

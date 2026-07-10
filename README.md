@@ -20,7 +20,7 @@ Monitor [DeepSeek API](https://platform.deepseek.com) usage and costs directly f
 ### Features
 
 - **One command** — `deepseek status` shows everything: balance, period cost, API requests, tokens, per-model breakdown
-- **Time range control** — `--period 30d` for last 30 days, `--period this-month` for this month, etc.
+- **Time range control** — `--period today` for today (default), `--period 7d` for last 7 days, `--period 30d` for last 30 days, etc.
   - Or just run `deepseek status` and pick interactively (including a calendar date picker for custom ranges)
 - **Machine-readable** — `--json` outputs raw data for scripting / piping
 - **Daily breakdown** — `-v` adds a table of daily cost, requests, and tokens
@@ -83,20 +83,22 @@ deepseek completions fish > ~/.config/fish/completions/deepseek.fish
 
 ## Commands
 
-| Command                                               | Description                           |
-| ----------------------------------------------------- | ------------------------------------- |
-| `deepseek status`                                     | Usage dashboard (interactive prompt)  |
-| `deepseek status --period 30d`                        | Last 30 days                          |
-| `deepseek status --period this-month`                 | Current month                         |
-| `deepseek status --period last-month`                 | Previous month                        |
-| `deepseek status --start YYYY-MM-DD --end YYYY-MM-DD` | Custom date range (max 30 days)       |
-| `deepseek status -v`                                  | Add daily breakdown table             |
-| `deepseek status --json`                              | Output as JSON (for scripting)        |
-| `deepseek status --no-interactive`                    | Disable interactive prompts (CI/pipe) |
-| `deepseek login`                                      | WeChat QR authentication              |
-| `deepseek token`                                      | Paste session token manually          |
-| `deepseek logout`                                     | Clear stored credentials              |
-| `deepseek completions <SHELL>`                        | Generate shell completion script      |
+| Command                                               | Description                                 |
+| ----------------------------------------------------- | ------------------------------------------- |
+| `deepseek status`                                     | Usage dashboard (defaults to today)         |
+| `deepseek status --period today`                      | Today                                       |
+| `deepseek status --period 7d`                         | Last 7 days                                 |
+| `deepseek status --period 30d`                        | Last 30 days                                |
+| `deepseek status --period this-month`                 | Current month                               |
+| `deepseek status --period last-month`                 | Previous month                              |
+| `deepseek status --start YYYY-MM-DD --end YYYY-MM-DD` | Custom date range (max 30 days)             |
+| `deepseek status -v`                                  | Add daily breakdown table                   |
+| `deepseek status --json`                              | Output as JSON (for scripting)              |
+| `deepseek status --no-interactive`                    | Disable interactive prompts (default today) |
+| `deepseek login`                                      | WeChat QR authentication                    |
+| `deepseek token`                                      | Paste session token manually                |
+| `deepseek logout`                                     | Clear stored credentials                    |
+| `deepseek completions <SHELL>`                        | Generate shell completion script            |
 
 ## Authentication
 

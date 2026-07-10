@@ -3,6 +3,11 @@ use crate::types::AggregatedData;
 use tabled::Table;
 use tabled::settings::Style;
 
+/// Format cache hit rate as percentage string.
+fn format_hit_rate(rate: f64) -> String {
+    format!("{:.1}%", rate * 100.0)
+}
+
 /// Print the full usage dashboard to stdout.
 pub fn show_usage(data: &AggregatedData, verbose: bool) {
     let beijing = data.last_updated + chrono::Duration::hours(8);
@@ -34,6 +39,10 @@ pub fn show_usage(data: &AggregatedData, verbose: bool) {
             item: "Tokens",
             amount: format_tokens(data.period_tokens),
         },
+        SummaryRow {
+            item: "Cache Hit Rate",
+            amount: format_hit_rate(data.cache_hit_rate),
+        },
     ];
     println!("{}", Table::new(summary_rows).with(Style::rounded()));
 
@@ -50,6 +59,11 @@ pub fn show_usage(data: &AggregatedData, verbose: bool) {
                 cost: format_cost(m.cost, &data.currency),
                 api_requests: format_number(m.api_requests),
                 tokens: format_tokens(m.tokens),
+                hit_rate: if m.cache_hit + m.cache_miss > 0 {
+                    format_hit_rate(m.cache_hit as f64 / (m.cache_hit + m.cache_miss) as f64)
+                } else {
+                    "-".into()
+                },
             })
             .collect();
         println!("{}", Table::new(model_rows).with(Style::rounded()));
@@ -68,6 +82,9 @@ pub fn show_usage(data: &AggregatedData, verbose: bool) {
                 cost: format_cost(d.cost, &data.currency),
                 api_requests: format_number(d.api_requests),
                 tokens: format_tokens(d.tokens),
+                output_tokens: format_tokens(d.output_tokens),
+                cache_hit: format_tokens(d.cache_hit),
+                cache_miss: format_tokens(d.cache_miss),
             })
             .collect();
         println!("{}", Table::new(daily_rows).with(Style::rounded()));
@@ -94,6 +111,7 @@ struct ModelRow {
     cost: String,
     api_requests: String,
     tokens: String,
+    hit_rate: String,
 }
 
 #[derive(tabled::Tabled)]
@@ -103,6 +121,9 @@ struct DailyRow {
     cost: String,
     api_requests: String,
     tokens: String,
+    output_tokens: String,
+    cache_hit: String,
+    cache_miss: String,
 }
 
 // ── QR code display ─────────────────────────────────────────

@@ -20,8 +20,8 @@
 ### 功能
 
 - **一行命令看全部** — `deepseek status` 显示余额、周期消费、API 请求数、Token 用量、各模型明细
-- **时间范围控制** — `--period 30d` 查看近 30 天，`--period this-month` 查看本月，`--period last-month` 查看上月
-  - 或不加参数，运行 `deepseek status` 后交互选择
+- **时间范围控制** — `--period today` 查看今天（默认），`--period 7d` 查看近 7 天，`--period 30d` 查看近 30 天
+  - 或不加参数，运行 `deepseek status` 后交互选择（含日历日期选择器支持自定义范围）
 - **每日明细** — `-v` 追加每日费用、请求数、Token 用量表格
 - **机器可读** — `--json` 输出原始数据，便于脚本处理
 - **微信扫码登录** — 终端直接渲染二维码，扫码即登录
@@ -85,14 +85,16 @@ deepseek completions fish > ~/.config/fish/completions/deepseek.fish
 
 | 命令                                                  | 说明                         |
 | ----------------------------------------------------- | ---------------------------- |
-| `deepseek status`                                     | 用量看板（交互选择时间范围） |
+| `deepseek status`                                     | 用量看板（默认今天）         |
+| `deepseek status --period today`                      | 今天                         |
+| `deepseek status --period 7d`                         | 近 7 天                      |
 | `deepseek status --period 30d`                        | 近 30 天                     |
 | `deepseek status --period this-month`                 | 本月                         |
 | `deepseek status --period last-month`                 | 上月                         |
 | `deepseek status --start YYYY-MM-DD --end YYYY-MM-DD` | 自定义日期范围（最多 30 天） |
 | `deepseek status -v`                                  | 含每日明细表格               |
 | `deepseek status --json`                              | JSON 格式输出                |
-| `deepseek status --no-interactive`                    | 禁用交互提示（CI/管道）      |
+| `deepseek status --no-interactive`                    | 禁用交互提示（默认今天）     |
 | `deepseek login`                                      | 微信扫码登录                 |
 | `deepseek token`                                      | 手动粘贴 session token       |
 | `deepseek logout`                                     | 清除登录凭证                 |
